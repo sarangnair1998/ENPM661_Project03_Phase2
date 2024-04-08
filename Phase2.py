@@ -5,6 +5,7 @@ from datetime import datetime
 import pygame
 import sys
 
+
 def valid_point(x, y, radius, clear):
     d = radius+clear
     # Check if inside the bounding box
@@ -28,13 +29,14 @@ def valid_point(x, y, radius, clear):
 def move_star(node, wheel_rpms, radius, clear, wheel_radius, wheel_distance):
     RPM1 = wheel_rpms[0]
     RPM2 = wheel_rpms[1]
-    action_set = [[RPM1, RPM1], [RPM2,RPM2],[RPM1, RPM2], [RPM2, RPM1], [0,RPM1], [RPM1,0], [0,RPM2], [RPM2,0]] #Differential Drive Action Set
+    action_set = [[RPM1, RPM1], [RPM2,RPM2],[RPM1, RPM2], [RPM2, RPM1], [0,RPM1], [RPM1,0], [0,RPM2], [RPM2,0]] 
     newNodes = [] 
 
-    for rpms in action_set: 
-        newNode = cost(node, rpms, radius, wheel_radius, wheel_distance, clear) 
-        if newNode[0] is not None:
-            newNodes.append(newNode)
+    for rpms in action_set:
+        result = cost(node, rpms, radius, wheel_radius, wheel_distance, clear)
+        if result is not None:
+            newNode, moveCost = result
+            newNodes.append((newNode, moveCost, rpms))
     return newNodes
 
 
@@ -52,9 +54,9 @@ def cost(node, rpms, radius, wheel_radius,wheel_distance,clear):
     
     while t < 1:
         t+=dt
-        Delta_x = 0.5 * wheel_radius * (rpms[0] + rpms[1]) * np.cos(newNode_theta) * dt
-        Delta_y = 0.5 * wheel_radius * (rpms[0] + rpms[1]) * np.sin(newNode_theta) * dt
-        Delta_theta = (wheel_radius/wheel_distance)*(rpms[0] - rpms[1])*dt
+        Delta_x = 0.5 * wheel_radius * (rpms[0] + rpms[1]) * np.cos(newNode_theta) * dt *2*np.pi/60
+        Delta_y = 0.5 * wheel_radius * (rpms[0] + rpms[1]) * np.sin(newNode_theta) * dt *2*np.pi/60
+        Delta_theta = (wheel_radius/wheel_distance)*(rpms[0] - rpms[1])*dt *2*np.pi/60
 
         newNode_x += Delta_x
         newNode_y += Delta_y
@@ -63,20 +65,21 @@ def cost(node, rpms, radius, wheel_radius,wheel_distance,clear):
         C2G = C2G + np.sqrt((Delta_x)**2 + (Delta_y)**2)
 
         if not valid_point(newNode_x, newNode_y, radius, clear):
-            return None, None
+            return None
 
     newNode_theta = int(np.rad2deg(newNode_theta)) % 360
     newNode_theta = newNode_theta // 30
 
-    return [newNode_x, newNode_y, newNode_theta], C2G
+    return [int(newNode_x), int(newNode_y), int(newNode_theta)], int(C2G)
+
 
 def heuristic(node, goal_node):
-  return 1 * np.sqrt(np.square(goal_node[0] - node[0]) + np.square(goal_node[1] - node[1]))
+  return 1.5 * np.sqrt(np.square(goal_node[0] - node[0]) + np.square(goal_node[1] - node[1]))
 
 
 def inGoal(node, goal_node):
     
-    goal_radius = 3
+    goal_radius = 5
     x_goal = goal_node[0]
     y_goal = goal_node[1]
 
@@ -93,11 +96,9 @@ def a_star_algorithm(start, goal,wheel_rpms, radius, clear, wheel_radius, wheel_
     cost_grid = [[[float('inf')] * 12 for _ in range(200)] for _ in range(600)]
     cost_grid[start[0]][start[1]][start[2]] = 0
 
-    # Create grid to store parents
     parent_grid = [[[None] * 12 for _ in range(200)] for _ in range(600)]
     parent_grid[start[0]][start[1]][start[2]] = None
 
-    # Create grid to store parents
     visited_grid = [[[False] * 12 for _ in range(200)] for _ in range(600)]
     visited_list = []
 
@@ -117,20 +118,18 @@ def a_star_algorithm(start, goal,wheel_rpms, radius, clear, wheel_radius, wheel_
         node_cost = cost_grid[node[0]][node[1]][node[2]]
 
         for action in actions:
-            move = action[0]
-            move[0] = int(move[0])
-            move[1] = int(move[1])
+            move, move_cost, rpms = action
+            x, y, theta = move
+            x_index, y_index, theta_index = int(x), int(y), int(theta)
             
-            if not visited_grid[move[0]][move[1]][move[2]]:
-                new_cost = node_cost + action[1]
-                if new_cost < cost_grid[move[0]][move[1]][move[2]]:
-                    
-                    cost_grid[move[0]][move[1]][move[2]] = new_cost
-                    priority = new_cost + heuristic(move, goal)
-                    open_queue.put((priority, move))                    
-                    parent_grid[move[0]][move[1]][move[2]] = node
+            if not visited_grid[x_index][y_index][theta_index]:
+                    new_cost = node_cost + move_cost
+                    if new_cost < cost_grid[x_index][y_index][theta_index]:
+                        cost_grid[x_index][y_index][theta_index] = new_cost
+                        priority = new_cost + heuristic([x, y], goal) 
+                        open_queue.put((priority, (x, y, theta))) 
+                        parent_grid[x_index][y_index][theta_index] = (node, rpms)  
 
-    
     return parent_grid, visited_list, print("Failed to find goal")
 
 
@@ -139,9 +138,10 @@ def find_path(parent_grid, visited_list, start):
     path = [current_node]
     start_node = start
     while start_node != current_node:
-        temp_node = parent_grid[current_node[0]][current_node[1]][current_node[2]]
+        parent_data = parent_grid[current_node[0]][current_node[1]][current_node[2]]
+        temp_node,rpms = parent_data
+        path.insert(0, (temp_node,rpms))
         current_node = temp_node
-        path.insert(0, current_node)
     return path
 
 def animate(start, goal, path, visited_list):
@@ -170,7 +170,7 @@ def animate(start, goal, path, visited_list):
     visited_index = 0  
     nodes_per_frame = 50
     path_index = 0
-    path_nodes_per_frame = 50
+    path_nodes_per_frame = 1
     running = True
     while running:
         for event in pygame.event.get():
@@ -180,11 +180,16 @@ def animate(start, goal, path, visited_list):
         canvas.blit(static_surface, (0, 0))
         for i in visited_list[:visited_index]:
             pygame.draw.circle(canvas, white, (int(i[0]), int(200 - i[1])), 1)
-        visited_index += nodes_per_frame 
+        visited_index += nodes_per_frame
         
         if visited_index >= len(visited_list):
-            for i in path[:path_index]:
-                pygame.draw.circle(canvas, black, (int(i[0]), int(200 - i[1])), 1)
+            for node_action in path[:path_index]:
+                if isinstance(node_action, tuple) and len(node_action) > 0 and isinstance(node_action[0], tuple) and len(node_action[0]) >= 2:
+                    node = node_action[0]
+                    x, y = node[0], node[1]  
+                    pygame.draw.circle(canvas, black, (int(x), 200 - int(y)), 1)
+                # else:
+                #     print(f"Unexpected structure: {node_action}")
             path_index += path_nodes_per_frame  
             
         pygame.draw.circle(canvas, red, (start[0], 200 - start[1]), 5)
@@ -193,10 +198,9 @@ def animate(start, goal, path, visited_list):
         clock.tick(60)
     pygame.quit()
     sys.exit()
-        
-    
 
-def main():
+def get_path():
+
     
     clear = round(int(input("Enter the clearance in the canvas: ")))
     clear = abs(clear)
@@ -239,10 +243,24 @@ def main():
     path = find_path(parent_grid, visited_list, start)
     end_time = datetime.now()
     time_taken = end_time - start_time
-    
     print('Path found in: ', time_taken," seconds")
+    new_path = []
+    for i in path[:-1]:
+        points = i[0]
+        rpms = i[1]
+        x = points[0]
+        y = points[1]
+        theta = points[2]
+
+        x = float(x/100) - 0.5
+        y = float(y/100) - 1
+        theta = theta*30
+
+        values = [x,y,theta]
+        new_path.append([values,rpms])
+    new_path.append([((goal_x/100)-0.5,(goal_y/100)-1),[0,0]])
     animate(start,goal,path,visited_list)
+    return new_path
 
 if __name__=="__main__":
-    main()
-
+    get_path()
